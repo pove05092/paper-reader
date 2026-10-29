@@ -73,9 +73,8 @@ async function openReader(id, seq, makePill) {
       }
     },
   };
-  // 開いた記録（初めて開いたら 未読→読書中）。送るのは閉じる時にまとめて。
+  // 開いた記録（最近開いた順のため）。送るのは閉じる時にまとめて。（v3：開いたら「読書中」にする自動の状態変更はやめた）
   engine.setField(id, 'lastOpenedAt', nowIso(), { silent: true });
-  if ((paper.status || 'unread') === 'unread') engine.setField(id, 'status', 'reading', { silent: true });
   await reader.load();
 }
 

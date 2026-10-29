@@ -3,8 +3,6 @@ import * as L from './logic.js';
 import { h, icon, clear, debounce, renderMarkdown, colorName } from './ui.js';
 import { tagEditor } from './tags.js';
 
-const STATUS_LABEL = { unread: '未読', reading: '読書中', done: '読了' };
-
 export class Panel {
   constructor(reader) {
     this.reader = reader; this.engine = reader.engine; this.tab = 'summary';
@@ -106,9 +104,6 @@ export class Panel {
     const folderSel = h('select', { class: 'input', dataset: { t: 'info-folder' } }, h('option', { value: '', text: '未分類' }), lib.folders.map(f => h('option', { value: f.id, text: f.name })));
     folderSel.value = paper.folderId || '';
     folderSel.addEventListener('change', () => engine.setField(paper.id, 'folderId', folderSel.value || null));
-    const statusSel = h('select', { class: 'input', dataset: { t: 'info-status' } }, Object.entries(STATUS_LABEL).map(([v, l]) => h('option', { value: v, text: l })));
-    statusSel.value = paper.status || 'unread';
-    statusSel.addEventListener('change', () => engine.setField(paper.id, 'status', statusSel.value));
     // タグ（v2）：チップ＋既存タグの候補。付け外しはすぐ保存の対象になる
     const tagEd = tagEditor({ engine, getTags: () => (this.paper.tags || []), onChange: tags => engine.setTags(paper.id, tags) });
     const tags = h('div', { class: 'field', dataset: { t: 'info-tags' } }, h('span', { class: 'lbl', text: 'タグ' }), tagEd.el);
@@ -116,7 +111,7 @@ export class Panel {
     clear(this.bodyEl);
     this.bodyEl.append(h('form', { class: 'info-form', onsubmit: e => e.preventDefault() },
       text('title', '題名'), text('titleOriginal', '原題'), text('authors', '著者'), text('year', '発行年', 'number'), text('journal', '誌名'),
-      field('フォルダ', folderSel), tags, field('状態', statusSel)),
+      field('フォルダ', folderSel), tags),
       h('div', { class: 'ro-list' },
         ro('ページ数', String(paper.pages ?? '')), ro('表示', paper.layout === 'spread' ? '見開き（左＝原文・右＝日本語）' : '1ページ'), ro('容量', L.formatBytes(paper.size)),
         ro('保存場所', paper.file || ''), ro('id', paper.id), ro('追加日', paper.addedAt ? paper.addedAt.slice(0, 10) : '')));

@@ -2,7 +2,7 @@
 //  - 殻（HTML・CSS・JS・アイコン）はネットワーク優先、つながらなければキャッシュ → オフラインでも起動する。更新は次に開いた時に届く。
 //  - 同梱の pdf.js（vendor/pdfjs/）は不変なのでキャッシュ優先。
 //  - api.github.com など別のオリジンは一切触らない（キャッシュしない）。論文のデータは IndexedDB 側にある。
-const VERSION = 'v2-2026-10-29';
+const VERSION = 'v3-2026-10-29';
 const SHELL = `pr-shell-${VERSION}`;
 const RUNTIME = `pr-runtime-${VERSION}`;
 const CORE = [

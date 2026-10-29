@@ -3,15 +3,14 @@ import * as L from './logic.js';
 import { h, icon, clear, debounce, openMenu, openDialog, confirmDialog, promptDialog, toast, randomId } from './ui.js';
 import * as T from './tags.js';
 
-const STATUS = [['all', 'すべて'], ['unread', '未読'], ['reading', '読書中'], ['done', '読了']];
-const STATUS_LABEL = { unread: '未読', reading: '読書中', done: '読了' };
+// v3：「未読・読書中・読了」の状態は画面から外した（本人「要素としてなくていい。タグを自分で作るので」）。論文データの status 欄は触らず残す（読まない・書かない）
 const SORTS = [['recent', '最近開いた'], ['added', '追加日'], ['year', '発行年'], ['title', '題名']];
 
 export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
   const saved = prefs.get().lib || {};
-  const ui = { folder: saved.folder || 'all', status: saved.status || 'all', sort: saved.sort || 'recent', tags: Array.isArray(saved.tags) ? saved.tags : [], q: '', selecting: false, selected: new Set() };
-  const persist = () => prefs.set({ lib: { folder: ui.folder, status: ui.status, sort: ui.sort, tags: ui.tags } });
-  const filterOpts = () => ({ folder: ui.folder, status: ui.status, q: ui.q, tags: ui.tags });
+  const ui = { folder: saved.folder || 'all', sort: saved.sort || 'recent', tags: Array.isArray(saved.tags) ? saved.tags : [], q: '', selecting: false, selected: new Set() };
+  const persist = () => prefs.set({ lib: { folder: ui.folder, sort: ui.sort, tags: ui.tags } });
+  const filterOpts = () => ({ folder: ui.folder, q: ui.q, tags: ui.tags });
   let destroyed = false, cached = new Set(), gridSig = '';
 
   // ---------- 骨組み ----------
@@ -58,19 +57,16 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
   // ---------- 道具（絞り込み・並べ替え・選択・追加） ----------
   function renderTools() {
     clear(toolsEl);
-    const chips = h('div', { class: 'chips', role: 'group', 'aria-label': '状態で絞り込み' }, STATUS.map(([v, l]) =>
-      h('button', { class: 'chip' + (ui.status === v ? ' on' : ''), type: 'button', dataset: { t: 'status-' + v }, 'aria-pressed': String(ui.status === v), onclick: () => { ui.status = v; persist(); renderTools(); renderGrid(); } }, l)));
     const sort = h('select', { class: 'input sort', 'aria-label': '並べ替え', dataset: { t: 'sort' } }, SORTS.map(([v, l]) => h('option', { value: v, text: '並べ替え：' + l })));
     sort.value = ui.sort;
     sort.addEventListener('change', () => { ui.sort = sort.value; persist(); renderGrid(); });
     const selB = h('button', { class: 'btn small' + (ui.selecting ? ' primary' : ''), type: 'button', dataset: { t: 'select-toggle' }, 'aria-pressed': String(ui.selecting),
       onclick: () => { ui.selecting = !ui.selecting; ui.selected.clear(); renderTools(); renderGrid(); renderSelBar(); } }, icon('check'), ui.selecting ? '選択を終える' : '選択');
     const addB = h('button', { class: 'btn primary small add-btn', type: 'button', dataset: { t: 'add-paper' }, onclick: () => fileInput.click() }, icon('plus'), '論文を追加');
-    toolsEl.append(chips, h('span', { class: 'sp' }), sort, selB, addB);
+    toolsEl.append(h('span', { class: 'sp' }), sort, selB, addB);
   }
 
   // ---------- カード ----------
-  function statusBadge(p) { return h('span', { class: 'badge st-' + (p.status || 'unread'), text: STATUS_LABEL[p.status] || '未読' }); }
   function makeCard(p) {
     const img = h('img', { class: 'thumb-img', alt: '', decoding: 'async', draggable: 'false' });
     img.hidden = true;
@@ -89,7 +85,7 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
         h('div', { class: 'c-meta', text: meta }),
         p.journal ? h('div', { class: 'c-journal', text: p.journal }) : null,
         (p.tags && p.tags.length) ? h('div', { class: 'c-tags' }, p.tags.map(t => h('span', { class: 'tag', text: t }))) : null,
-        h('div', { class: 'c-row' }, statusBadge(p), p.hasAiSummary ? h('span', { class: 'badge sum', text: '要約あり' }) : null, pending ? h('span', { class: 'badge pend', text: '未送信' }) : null, h('span', { class: 'badge saved', hidden: !cached.has(engine.base?.files[p.file]?.sha) && !pending, dataset: { saved: p.id }, text: '端末に保存済み' })),
+        h('div', { class: 'c-row' }, p.hasAiSummary ? h('span', { class: 'badge sum', text: '要約あり' }) : null, pending ? h('span', { class: 'badge pend', text: '未送信' }) : null, h('span', { class: 'badge saved', hidden: !cached.has(engine.base?.files[p.file]?.sha) && !pending, dataset: { saved: p.id }, text: '端末に保存済み' })),
         bar));
     const menuB = h('button', { class: 'card-menu', type: 'button', 'aria-label': 'メニュー', dataset: { t: 'card-menu', id: p.id }, onclick: e => { e.stopPropagation(); cardMenu(e.currentTarget, p); } }, icon('more'));
     const check = h('span', { class: 'card-check', 'aria-hidden': 'true' }, icon('check'));
@@ -143,10 +139,6 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
         for (const id of ui.selected) engine.setField(id, 'folderId', fid);
         toast(`${n} 件を移動しました`); ui.selected.clear(); ui.selecting = false; renderTools(); renderGrid();
       } }, icon('folder'), 'まとめて移動'),
-      h('button', { class: 'btn small', type: 'button', disabled: !n, dataset: { t: 'sel-status' }, onclick: e => openMenu(e.currentTarget, Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l + 'にする', id: 'ss-' + v, onClick: () => {
-        for (const id of ui.selected) engine.setField(id, 'status', v);
-        toast(`${n} 件を「${l}」にしました`); ui.selected.clear(); ui.selecting = false; renderTools(); renderGrid();
-      } })), { align: 'right' }) }, icon('check'), 'まとめて状態'),
       h('button', { class: 'btn small', type: 'button', disabled: !n, dataset: { t: 'sel-tags' }, onclick: () => T.openBulkTagDialog({ engine, ids: [...ui.selected] }) }, icon('plus'), 'まとめてタグ'));
   }
 
@@ -156,8 +148,6 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
     openMenu(anchor, [
       { label: 'フォルダへ移動…', id: 'm-move', onClick: async () => { const fid = await pickFolder({ title: 'フォルダへ移動', current: p.folderId || null }); if (fid !== undefined) { engine.setField(p.id, 'folderId', fid); renderFolders(); } } },
       { label: 'タグを編集…', id: 'm-tags', onClick: () => T.openTagDialog({ engine, paperId: p.id }) },
-      { sep: true }, { heading: '状態' },
-      ...Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l, checked: (p.status || 'unread') === v, id: 'm-st-' + v, onClick: () => engine.setField(p.id, 'status', v) })),
       { sep: true },
       { label: '情報の編集…', id: 'm-info', onClick: () => editInfo(p) },
       { label: 'この端末から削除（キャッシュ）', id: 'm-cache', disabled: !sha || !cached.has(sha), onClick: async () => { await engine.dropCache(p); toast('この端末の保存を消しました（倉庫には残っています）'); renderGrid(); } },
