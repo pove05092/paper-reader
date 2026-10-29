@@ -1,6 +1,7 @@
 // library.js : ライブラリ（ホーム）。フォルダ・絞り込み・並べ替え・カード・複数選択・追加。仕様 §3.1。
 import * as L from './logic.js';
 import { h, icon, clear, debounce, openMenu, openDialog, confirmDialog, promptDialog, toast, randomId } from './ui.js';
+import * as T from './tags.js';
 
 const STATUS = [['all', 'すべて'], ['unread', '未読'], ['reading', '読書中'], ['done', '読了']];
 const STATUS_LABEL = { unread: '未読', reading: '読書中', done: '読了' };
@@ -8,8 +9,9 @@ const SORTS = [['recent', '最近開いた'], ['added', '追加日'], ['year', '
 
 export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
   const saved = prefs.get().lib || {};
-  const ui = { folder: saved.folder || 'all', status: saved.status || 'all', sort: saved.sort || 'recent', q: '', selecting: false, selected: new Set() };
-  const persist = () => prefs.set({ lib: { folder: ui.folder, status: ui.status, sort: ui.sort } });
+  const ui = { folder: saved.folder || 'all', status: saved.status || 'all', sort: saved.sort || 'recent', tags: Array.isArray(saved.tags) ? saved.tags : [], q: '', selecting: false, selected: new Set() };
+  const persist = () => prefs.set({ lib: { folder: ui.folder, status: ui.status, sort: ui.sort, tags: ui.tags } });
+  const filterOpts = () => ({ folder: ui.folder, status: ui.status, q: ui.q, tags: ui.tags });
   let destroyed = false, cached = new Set(), gridSig = '';
 
   // ---------- 骨組み ----------
@@ -19,13 +21,14 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
   const topEl = h('header', { class: 'lib-top' }, h('h1', { class: 'app-name', text: '論文リーダー' }), h('div', { class: 'search-wrap' }, icon('search'), search), pill.el, settingsB);
   const folderEl = h('nav', { class: 'folders', 'aria-label': 'フォルダ', dataset: { t: 'folders' } });
   const toolsEl = h('div', { class: 'lib-tools' });
+  const tagbarEl = h('div', { class: 'tagbar', role: 'group', 'aria-label': 'タグで絞り込み', dataset: { t: 'tagbar' } });
   const bannerEl = h('div', { class: 'banner', hidden: true, dataset: { t: 'banner' } });
   const gridEl = h('div', { class: 'grid', dataset: { t: 'grid' } });
   const selBar = h('div', { class: 'selbar', hidden: true, dataset: { t: 'selbar' } });
   const fileInput = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, hidden: true, dataset: { t: 'file-input' } });
   fileInput.addEventListener('change', () => { const f = [...fileInput.files]; fileInput.value = ''; if (f.length) onFiles(f, ui.folder !== 'all' && ui.folder !== 'none' ? ui.folder : null); });
   const fab = h('button', { class: 'fab', type: 'button', 'aria-label': '論文を追加', dataset: { t: 'add-fab' }, onclick: () => fileInput.click() }, icon('plus'), h('span', { text: '論文を追加' }));
-  const mainEl = h('main', { class: 'lib-main' }, toolsEl, bannerEl, gridEl);
+  const mainEl = h('main', { class: 'lib-main' }, toolsEl, tagbarEl, bannerEl, gridEl);
   const root = h('div', { class: 'library' }, topEl, h('div', { class: 'lib-body' }, folderEl, mainEl), selBar, fab, fileInput);
   host.append(root);
 
@@ -39,6 +42,17 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
     folderEl.append(item('all', 'すべて', counts.all), item('none', '未分類', counts.none));
     for (const f of [...lib.folders].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) folderEl.append(item(f.id, f.name, counts[f.id] ?? 0));
     folderEl.append(h('button', { class: 'folder add', type: 'button', dataset: { t: 'folder-manage' }, onclick: () => manageFolders() }, icon('folder'), h('span', { class: 'f-name', text: 'フォルダを編集' })));
+  }
+
+  // ---------- タグの絞り込み帯（v2）：押すとそのタグの論文だけ。複数押すと、全部に当てはまるものだけ ----------
+  function renderTagBar() {
+    const tags = L.tagList(engine.library.papers), keys = new Set(tags.map(t => L.tagKey(t.name)));
+    const kept = ui.tags.filter(t => keys.has(L.tagKey(t)));
+    if (kept.length !== ui.tags.length) { ui.tags = kept; persist(); }                          // 消えたタグで絞り込んだままにしない
+    T.fillTagBar(tagbarEl, { tags, selected: ui.tags,
+      onToggle: name => { ui.tags = ui.tags.some(t => L.tagKey(t) === L.tagKey(name)) ? ui.tags.filter(t => L.tagKey(t) !== L.tagKey(name)) : [...ui.tags, name]; persist(); renderTagBar(); renderGrid(); },
+      onClear: () => { ui.tags = []; persist(); renderTagBar(); renderGrid(); },
+      onManage: () => T.openTagManager({ engine }) });
   }
 
   // ---------- 道具（絞り込み・並べ替え・選択・追加） ----------
@@ -85,7 +99,7 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
     if (destroyed) return;
     const lib = engine.library;
     try { cached = await engine.cachedShaSet(); } catch (e) { cached = new Set(); }
-    const list = L.sortPapers(L.filterPapers(lib.papers, { folder: ui.folder, status: ui.status, q: ui.q }), ui.sort);
+    const list = L.sortPapers(L.filterPapers(lib.papers, filterOpts()), ui.sort);
     // 見える内容が前回と同じなら描き直さない（描き直すと、押そうとしたカードが指の下で入れ替わりうる）
     const sig = JSON.stringify([engine.configured, !!engine.base, engine.err ? engine.err.message : null, ui.selecting, [...ui.selected].sort(), lib.papers.length,
       list.map(p => [p, cached.has(engine.base?.files[p.file]?.sha), engine.uploadIds.has(p.id)])]);
@@ -118,7 +132,7 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
     if (!ui.selecting) return;
     clear(selBar);
     const n = ui.selected.size;
-    const visible = () => L.filterPapers(engine.library.papers, { folder: ui.folder, status: ui.status, q: ui.q });
+    const visible = () => L.filterPapers(engine.library.papers, filterOpts());
     selBar.append(
       h('span', { class: 'sel-n', dataset: { t: 'sel-count' }, text: `${n} 件選択` }),
       h('button', { class: 'btn small', type: 'button', onclick: () => { for (const p of visible()) ui.selected.add(p.id); renderGrid(); }, dataset: { t: 'sel-all' } }, '全部'),
@@ -132,7 +146,8 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
       h('button', { class: 'btn small', type: 'button', disabled: !n, dataset: { t: 'sel-status' }, onclick: e => openMenu(e.currentTarget, Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l + 'にする', id: 'ss-' + v, onClick: () => {
         for (const id of ui.selected) engine.setField(id, 'status', v);
         toast(`${n} 件を「${l}」にしました`); ui.selected.clear(); ui.selecting = false; renderTools(); renderGrid();
-      } })), { align: 'right' }) }, icon('check'), 'まとめて状態'));
+      } })), { align: 'right' }) }, icon('check'), 'まとめて状態'),
+      h('button', { class: 'btn small', type: 'button', disabled: !n, dataset: { t: 'sel-tags' }, onclick: () => T.openBulkTagDialog({ engine, ids: [...ui.selected] }) }, icon('plus'), 'まとめてタグ'));
   }
 
   // ---------- カードのメニュー ----------
@@ -140,10 +155,7 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
     const sha = engine.base?.files[p.file]?.sha;
     openMenu(anchor, [
       { label: 'フォルダへ移動…', id: 'm-move', onClick: async () => { const fid = await pickFolder({ title: 'フォルダへ移動', current: p.folderId || null }); if (fid !== undefined) { engine.setField(p.id, 'folderId', fid); renderFolders(); } } },
-      { label: 'タグを編集…', id: 'm-tags', onClick: async () => {
-        const v = await promptDialog({ title: 'タグを編集', label: 'カンマ区切り', value: (p.tags || []).join(', ') });
-        if (v !== null) engine.setField(p.id, 'tags', v.split(/[,、]/).map(s => s.trim()).filter(Boolean));
-      } },
+      { label: 'タグを編集…', id: 'm-tags', onClick: () => T.openTagDialog({ engine, paperId: p.id }) },
       { sep: true }, { heading: '状態' },
       ...Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l, checked: (p.status || 'unread') === v, id: 'm-st-' + v, onClick: () => engine.setField(p.id, 'status', v) })),
       { sep: true },
@@ -216,12 +228,12 @@ export function renderLibrary({ engine, host, go, prefs, pill, onFiles }) {
   }
 
   // ---------- イベント ----------
-  const rerender = debounce(() => { renderFolders(); renderGrid(); }, 60);
+  const rerender = debounce(() => { renderFolders(); renderTagBar(); renderGrid(); }, 60);
   const onLib = () => rerender();
   const onStatus = () => { renderBanner(); if (!engine.base) rerender(); };      // 倉庫をまだ読めていない間は、状態の変化（読み込み中→エラー）に合わせて描き直す
   const onCache = () => { rerender(); };
   engine.addEventListener('library', onLib); engine.addEventListener('status', onStatus); engine.addEventListener('cache', onCache);
-  renderFolders(); renderTools(); renderGrid(); renderBanner();
+  renderFolders(); renderTools(); renderTagBar(); renderGrid(); renderBanner();
   return {
     destroy() { destroyed = true; engine.removeEventListener('library', onLib); engine.removeEventListener('status', onStatus); engine.removeEventListener('cache', onCache); rerender.cancel(); root.remove(); },
   };

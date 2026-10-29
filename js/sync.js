@@ -144,6 +144,9 @@ export class SyncEngine extends EventTarget {
     this.emit('storage-error', e);
   }
   setField(id, key, value, opts) { this.patch({ op: 'setField', id, key, value }, opts); }
+  /** タグ（v2）：整えて重複を落として tags 欄に書く。まとめて変える時は applyTagChanges */
+  setTags(id, tags, opts) { this.setField(id, 'tags', L.uniqueTags(tags), opts); }
+  applyTagChanges(changes) { for (const c of changes) this.setTags(c.id, c.tags); return changes.length; }
 
   // ---------- メモ（線・付箋・自分の要約） ----------
   /** 論文を開いた時：端末内の写し＋倉庫の notes.json を合流して返す。返した rec を直接編集して touchNotes(rec) を呼ぶ */

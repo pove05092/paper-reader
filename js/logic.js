@@ -273,11 +273,77 @@ export function searchMatch(p, q) {
   const hay = [p.title, p.titleOriginal, p.authors, p.journal, String(p.year ?? ''), ...(p.tags || [])].join('\n').toLowerCase();
   return terms.every(t => hay.includes(t));
 }
-export function filterPapers(papers, { folder = 'all', status = 'all', q = '' } = {}) {
+export function filterPapers(papers, { folder = 'all', status = 'all', q = '', tags = [] } = {}) {
   return papers.filter(p =>
     (folder === 'all' || (folder === 'none' ? !p.folderId : p.folderId === folder)) &&
-    (status === 'all' || p.status === status) && searchMatch(p, q));
+    (status === 'all' || p.status === status) && hasAllTags(p, tags) && searchMatch(p, q));
 }
+
+// ---------- タグ（v2・2026-10-29） ----------
+// 保存の形は今までどおり、論文の tags 欄（文字列の配列）。タグという別の台帳は持たない＝名前を変える・消すは「付いている論文の tags を書き換える」操作。
+export const TAG_MAX_LEN = 30;
+/** 付ける名前の整え方：空白をそろえて前後を落とし、30 字まで */
+export const cleanTag = s => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, TAG_MAX_LEN);
+/** 同じタグとみなす鍵：全角半角・大文字小文字・空白の違いは無視（「Mars」と「mars」、「ＣＴＸ」と「CTX」） */
+export const tagKey = s => cleanTag(String(s ?? '').normalize('NFKC')).toLowerCase();
+/** 入力欄の文字列をタグに割る（カンマ「,」「、」「，」と改行で区切る） */
+export const parseTagInput = str => uniqueTags(String(str ?? '').split(/[,、，\n]/));
+/** 整えて、同じタグ（tagKey が同じ）の重複を落とす。先に出た表記を残す */
+export function uniqueTags(list) {
+  const seen = new Set(), out = [];
+  for (const t of list || []) { const c = cleanTag(t), k = tagKey(c); if (!k || seen.has(k)) continue; seen.add(k); out.push(c); }
+  return out;
+}
+export const hasTag = (p, name) => (p.tags || []).some(t => tagKey(t) === tagKey(name));
+export const hasAllTags = (p, names) => !names || !names.length || names.every(n => hasTag(p, n));
+/** 全論文のタグの一覧 [{ name, count }]。表記ゆれは一つにまとめ、名前は一番多い表記（同数なら先に出た方）。多い順→五十音順 */
+export function tagList(papers) {
+  const m = new Map();
+  for (const p of papers) {
+    for (const t of uniqueTags(p.tags)) {
+      const k = tagKey(t); let e = m.get(k);
+      if (!e) { e = { count: 0, forms: new Map() }; m.set(k, e); }
+      e.count++; e.forms.set(t, (e.forms.get(t) || 0) + 1);
+    }
+  }
+  const out = [];
+  for (const e of m.values()) {
+    let best = null, bn = -1;
+    for (const [f, n] of e.forms) if (n > bn) { best = f; bn = n; }
+    out.push({ name: best, count: e.count });
+  }
+  return out.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name, 'ja'));
+}
+/** 既にある同じタグの表記があればそれに合わせる（「mars」と打っても既存の「Mars」になる）。無ければ整えた名前 */
+export function canonicalTag(papers, name) {
+  const c = cleanTag(name), k = tagKey(c);
+  const f = tagList(papers).find(t => tagKey(t.name) === k);
+  return f ? f.name : c;
+}
+/** 以下は「論文ごとの新しい tags」のリスト [{ id, tags }] を返す（変わる論文だけ）。適用は engine.setTags で1件ずつ */
+export function addTagChanges(papers, ids, name) {
+  const n = canonicalTag(papers, name); if (!tagKey(n)) return [];
+  const want = new Set(ids), out = [];
+  for (const p of papers) if (want.has(p.id) && !hasTag(p, n)) out.push({ id: p.id, tags: uniqueTags([...(p.tags || []), n]) });
+  return out;
+}
+export function removeTagChanges(papers, ids, name) {
+  const want = ids ? new Set(ids) : null, out = [];
+  for (const p of papers) if ((!want || want.has(p.id)) && hasTag(p, name)) out.push({ id: p.id, tags: uniqueTags((p.tags || []).filter(t => tagKey(t) !== tagKey(name))) });
+  return out;
+}
+/** 名前の変更。変更先が別の既存タグと同じなら統合（その表記に合わせる）。大文字小文字だけの変更は、打った表記にする */
+export function renameTagChanges(papers, from, to) {
+  const fk = tagKey(from), c = cleanTag(to); if (!tagKey(c)) return [];
+  const toName = tagKey(c) === fk ? c : canonicalTag(papers, c), out = [];
+  for (const p of papers) {
+    if (!hasTag(p, from)) continue;
+    const next = uniqueTags((p.tags || []).map(t => (tagKey(t) === fk ? toName : t)));
+    if (JSON.stringify(next) !== JSON.stringify(p.tags || [])) out.push({ id: p.id, tags: next });
+  }
+  return out;
+}
+export const deleteTagChanges = (papers, name) => removeTagChanges(papers, null, name);
 export function sortPapers(papers, key = 'recent') {
   const a = [...papers];
   const t = s => tsOf(s);

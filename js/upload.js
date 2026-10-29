@@ -117,7 +117,7 @@ function confirmScreen(engine, cands) {
             taken.add(id);
             const e = c.entry, now = L.nowIso();
             const entry = { id, title: (e.title || '').trim() || c.parsed.stem, titleOriginal: (e.titleOriginal || '').trim(), authors: (e.authors || '').trim(), year: e.year ?? null,
-              journal: (e.journal || '').trim(), folderId: e.folderId || null, tags: String(e.tags || '').split(/[,、]/).map(s => s.trim()).filter(Boolean), status: 'unread',
+              journal: (e.journal || '').trim(), folderId: e.folderId || null, tags: L.parseTagInput(e.tags), status: 'unread',
               pages: c.analysis.pages, layout: c.analysis.layout, file: `papers/${id}/paper.pdf`, size: c.file.size, thumb: `papers/${id}/thumb.jpg`, hasAiSummary: false,
               addedAt: now, updatedAt: now, lastOpenedAt: null, lastPage: 1, source: 'upload:' + c.file.name };
             const job = { paperId: id, entry, createdAt: now, shas: {}, files: [

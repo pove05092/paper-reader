@@ -2,13 +2,13 @@
 //  - 殻（HTML・CSS・JS・アイコン）はネットワーク優先、つながらなければキャッシュ → オフラインでも起動する。更新は次に開いた時に届く。
 //  - 同梱の pdf.js（vendor/pdfjs/）は不変なのでキャッシュ優先。
 //  - api.github.com など別のオリジンは一切触らない（キャッシュしない）。論文のデータは IndexedDB 側にある。
-const VERSION = 'v1-2026-10-29';
+const VERSION = 'v2-2026-10-29';
 const SHELL = `pr-shell-${VERSION}`;
 const RUNTIME = `pr-runtime-${VERSION}`;
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/logic.js', 'js/geom.js', 'js/ui.js', 'js/store.js', 'js/github.js', 'js/sync.js', 'js/syncpill.js', 'js/pdf.js',
-  'js/viewer.js', 'js/ink.js', 'js/toolbar.js', 'js/panel.js', 'js/library.js', 'js/upload.js', 'js/settings.js',
+  'js/viewer.js', 'js/ink.js', 'js/toolbar.js', 'js/panel.js', 'js/library.js', 'js/upload.js', 'js/settings.js', 'js/tags.js',
   'icons/icon-192.png', 'icons/icon-512.png',
   'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs',
 ];
