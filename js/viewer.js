@@ -382,6 +382,7 @@ export class Reader {
       const page = await this.pdf.getPage(pv.index);
       if (gen !== pv.tlGen || !pv.active || this.destroyed) return;
       const layerEl = h('div', { class: 'textLayer' }), end = h('div', { class: 'endOfContent' });
+      layerEl.setAttribute('lang', '');            // 言語を「不明」にする。ページが lang="ja" のままだと、英字の font-family:serif が日本語の明朝で描かれ、pdf.js が幅を測った欧文フォント（lang なしの canvas）より約 2 割広くなって、選択の青い範囲が実際の字の位置からずれる
       const { layer, width, height } = await makeTextLayer(page, layerEl);
       pv.tlTask = layer;
       await layer.render();
