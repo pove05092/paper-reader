@@ -4,7 +4,8 @@
 //  - タッチは touch-action:none で自前処理：1 本指＝描く/スクロール、2 本指＝ピンチ＋移動（描きかけは取り消す）。
 import * as L from './logic.js';
 import { h, icon, clamp, debounce, toast, openMenu, clear, promptDialog } from './ui.js';
-import { openPdf, isCancelled } from './pdf.js';
+import { openPdf, isCancelled, makeTextLayer, TEXT_SCALE } from './pdf.js';
+import { registerTextLayer, unregisterTextLayer, clearSelection } from './textsel.js';
 import { Ink } from './ink.js';
 import { buildToolbar } from './toolbar.js';
 import { Panel } from './panel.js';
@@ -22,11 +23,20 @@ class PageView {
     this.pdfCanvas = null; this.mCanvas = null; this.pCanvas = null; this.live = null;
     this.active = false; this.gen = 0; this.task = null; this.renderedKey = ''; this.failed = null;
     this.top = 0; this.cssW = 0; this.cssH = 0;
+    this.tl = null; this.tlTask = null; this.tlGen = 0; this.tlBuilding = -1;             // 文字層（選択・コピー用の透明な文字）
   }
   freeCanvases() {
     for (const k of ['pdfCanvas', 'mCanvas', 'pCanvas', 'live']) { const c = this[k]; if (c) { c.width = c.height = 0; c.remove(); this[k] = null; } }
     clear(this.pins);
     this.el.classList.remove('has-pdf', 'render-failed');
+    this.freeText();
+  }
+  freeText() {
+    this.tlGen++;                                                    // 作りかけの文字層は捨てる
+    if (this.tlTask) { try { this.tlTask.cancel(); } catch (e) { /* 作り終えている */ } this.tlTask = null; }
+    const t = this.tl; this.tl = null;
+    if (!t) return;
+    unregisterTextLayer(t.layer); t.clip.remove();
   }
 }
 
@@ -126,6 +136,7 @@ export class Reader {
       this.pages = Array.from({ length: this.numPages }, (_, i) => new PageView(this, i + 1, aspect));
       this.pagesEl.append(...this.pages.map(pv => pv.el));
       this.ink = new Ink(this, this.opts.prefs.get());
+      this.ink.onChange(what => { if (what === 'tool' && this.ink.tool !== 'move') clearSelection(); });     // 書き込みの道具に切り替えたら、文字の選択は外す
       this.onRemoteNotes = e => { if (e.detail === this.paper.id && this.ink && !this.destroyed) this.ink.rerenderAll(); };   // 他の端末の書き込みを合流したら描き直す
       this.engine.addEventListener('notes', this.onRemoteNotes);
       this.toolbar = buildToolbar(this, this.ink);
@@ -189,6 +200,7 @@ export class Reader {
       pv.cssW = W; pv.cssH = W * pv.aspect / this.frac;
       pv.el.style.width = W + 'px'; pv.el.style.height = pv.cssH + 'px';
       pv.top = y; y += pv.cssH + gap;
+      this.placeText(pv);
     }
     this.pad = pad; this.contentW = W + 2 * pad; this.contentH = y - gap + pad;
     Object.assign(this.pagesEl.style, { width: this.contentW + 'px', height: this.contentH + 'px', padding: pad + 'px', gap: gap + 'px' });
@@ -298,7 +310,7 @@ export class Reader {
     }
     this.pump();
   }
-  activate(pv) { pv.active = true; this.ink.renderPage(pv); }
+  activate(pv) { pv.active = true; this.ink.renderPage(pv); this.ensureTextLayer(pv); }
   deactivate(pv) {
     pv.active = false; pv.gen++;
     if (pv.task) { try { pv.task.cancel(); } catch (e) { /* 終了済み */ } pv.task = null; }
@@ -358,6 +370,47 @@ export class Reader {
     } finally {
       try { if (page) page.cleanup(); } catch (e) { /* 無視 */ }
     }
+  }
+
+  // ---------- 文字層（選択・コピー）----------
+  /** 見えているページに透明な文字を重ねる。絵（キャンバス）とは別に作るので、拡大縮小で作り直さない（位置と倍率は placeText が CSS の変形で合わせる） */
+  async ensureTextLayer(pv) {
+    const gen = pv.tlGen;
+    if (pv.tl || pv.tlBuilding === gen || !this.pdf) return;
+    pv.tlBuilding = gen;
+    try {
+      const page = await this.pdf.getPage(pv.index);
+      if (gen !== pv.tlGen || !pv.active || this.destroyed) return;
+      const layerEl = h('div', { class: 'textLayer' }), end = h('div', { class: 'endOfContent' });
+      const { layer, width, height } = await makeTextLayer(page, layerEl);
+      pv.tlTask = layer;
+      await layer.render();
+      if (gen !== pv.tlGen || !pv.active || this.destroyed) return;
+      layerEl.style.setProperty('--total-scale-factor', String(TEXT_SCALE));
+      layerEl.style.width = width * TEXT_SCALE + 'px'; layerEl.style.height = height * TEXT_SCALE + 'px';
+      layerEl.append(end);
+      if (this.kind === 'spread') {                                   // 左右どちらの半分の文字か（片側だけ表示している時に、見えていない側を選択・コピーに混ぜない）
+        for (const el of layer.textDivs) {
+          const half = parseFloat(el.style.left) >= 50 ? '1' : '0';
+          el.dataset.h = half;
+          const nx = el.nextElementSibling; if (nx && nx.tagName === 'BR') nx.dataset.h = half;
+        }
+      }
+      const clip = h('div', { class: 'tl-clip' }, layerEl);
+      pv.el.append(clip);
+      pv.tl = { clip, layer: layerEl, w: width * TEXT_SCALE };
+      pv.tlTask = null;
+      registerTextLayer(layerEl, end);
+      this.placeText(pv);
+    } catch (e) {
+      if (!isCancelled(e)) console.warn('[reader] 文字層を作れませんでした', pv.index, e && e.message);
+    } finally { if (pv.tlBuilding === gen) pv.tlBuilding = -1; }
+  }
+  /** 文字層を今のページの大きさに合わせる（全面を作ってあるので、半分表示は左へずらして、はみ出しを切る） */
+  placeText(pv) {
+    const t = pv.tl; if (!t) return;
+    const s = pv.cssW / (t.w * this.frac);
+    t.layer.style.transform = `translate(${-this.offset * t.w * s}px, 0px) scale(${s})`;
   }
 
   // ---------- スクロール・ページ ----------
@@ -458,7 +511,7 @@ export class Reader {
     this.on(s, 'pointerup', e => this.onUp(e, false));
     this.on(s, 'pointercancel', e => this.onUp(e, true));
     this.on(s, 'wheel', e => this.onWheel(e), { passive: false });
-    this.on(s, 'contextmenu', e => e.preventDefault());
+    this.on(s, 'contextmenu', e => { if (this.ink.tool === 'move' && e.target.closest && e.target.closest('.textLayer')) return; e.preventDefault(); });   // 文字の上は右クリックのコピー・長押しの選択メニューを出す
   }
   pageFromTarget(t) { const el = t && t.closest ? t.closest('.page') : null; return el ? this.pages[Number(el.dataset.p) - 1] : null; }
   pageAtPoint(x, y) {
@@ -490,6 +543,10 @@ export class Reader {
         return;
       }
       if (tool === 'note' && pv) { this.mode = 'tap'; this.tap = { note: pv, x: e.clientX, y: e.clientY, t: now, type: e.pointerType }; return; }
+      if (e.pointerType === 'mouse') {                              // マウス：文字の上はブラウザの文字選択に任せる（ドラッグで選択・ダブルクリックで単語）。空白を押したら選択を消して、従来どおり紙面を引っぱる
+        if (e.target.closest && e.target.closest('.textLayer > span')) { this.mode = 'select'; return; }
+        clearSelection();
+      }
       this.startPan(e);
       if (e.pointerType === 'mouse') try { this.scroller.setPointerCapture(e.pointerId); } catch (err) { /* 無視 */ }
     } else if (this.ptrs.size === 2) {
@@ -498,7 +555,7 @@ export class Reader {
       this.beginPinch();
     }
   }
-  startPan(e) { this.mode = 'pan'; this.pan = { lastX: e.clientX, lastY: e.clientY, samples: [{ t: performance.now(), x: e.clientX, y: e.clientY }] }; }
+  startPan(e) { this.mode = 'pan'; this.pan = { lastX: e.clientX, lastY: e.clientY, sel0: window.getSelection().type, samples: [{ t: performance.now(), x: e.clientX, y: e.clientY }] }; }
   onMove(e) {
     const p = this.ptrs.get(e.pointerId); if (!p) return;
     p.x = e.clientX; p.y = e.clientY;
@@ -535,6 +592,7 @@ export class Reader {
   }
   doPan(e) {
     const pan = this.pan, sc = this.scroller;
+    if (e.pointerType === 'touch' && pan.sel0 !== 'Range' && window.getSelection().type === 'Range') { this.mode = 'select'; return; }   // 長押しで文字の選択が始まったら引っぱりをやめ、選択（ハンドル・延長）に任せる
     sc.scrollLeft -= e.clientX - pan.lastX; sc.scrollTop -= e.clientY - pan.lastY;
     pan.lastX = e.clientX; pan.lastY = e.clientY;
     const t = performance.now();
@@ -595,6 +653,7 @@ export class Reader {
       zoom: this.zoom, view: this.view, kind: this.kind, page: this.currentPage(), numPages: this.numPages, tool: this.ink && this.ink.tool,
       active: this.pages.filter(p => p.active).map(p => p.index),
       canvases: this.pages.filter(p => p.pdfCanvas).map(p => ({ i: p.index, w: p.pdfCanvas.width, h: p.pdfCanvas.height, cssW: Math.round(p.cssW), cssH: Math.round(p.cssH) })),
+      textLayers: this.pages.filter(p => p.tl).map(p => p.index),
       liveCanvases: this.pages.reduce((n, p) => n + ['pdfCanvas', 'mCanvas', 'pCanvas', 'live'].filter(k => p[k]).length, 0),
       strokes: this.rec ? this.rec.notes.strokes.filter(s => !s.deleted).length : 0, notes: this.rec ? this.rec.notes.notes.filter(n => !n.deleted).length : 0,
       scroll: { top: this.scroller.scrollTop, left: this.scroller.scrollLeft, h: this.scroller.scrollHeight, w: this.scroller.scrollWidth, ch: this.scroller.clientHeight, cw: this.scroller.clientWidth },

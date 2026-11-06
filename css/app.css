@@ -190,14 +190,31 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 4px rgba(40, 30, 10, .3); isolation: isolate; }
 .page > canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; display: block; }
 .page > .c-pdf { z-index: 0; }
-.page > .c-ink-m { z-index: 1; mix-blend-mode: multiply; }
-.page > .c-ink-p { z-index: 2; }
-.page > .c-live { z-index: 3; }
+.page > .c-ink-m { z-index: 2; mix-blend-mode: multiply; }
+.page > .c-ink-p { z-index: 3; }
+.page > .c-live { z-index: 4; }
 .page > .c-live.blend { mix-blend-mode: multiply; }
+/* 文字層（v4）：PDF の文字を透明な span で紙面に重ねる。見えるのは選択の色だけ。文字の上だけがマウス・タッチを受け取り、空白は下の紙面（引っぱり・書き込み）へ通す。
+   PDF の絵（z 0）と書き込み（z 2〜）のあいだに置く＝選択の色は絵の上・書き込みの下。作り方は textsel.js・viewer.js の ensureTextLayer */
+.tl-clip { position: absolute; inset: 0; overflow: hidden; z-index: 1; pointer-events: none; }
+.textLayer { color-scheme: only light; position: absolute; left: 0; top: 0; transform-origin: 0 0; line-height: 1; letter-spacing: normal; word-spacing: normal; pointer-events: none; text-align: initial;
+  text-size-adjust: none; -webkit-text-size-adjust: none; forced-color-adjust: none; -webkit-user-select: text; user-select: text; --total-scale-factor: 2; --scale-round-x: 1px; --scale-round-y: 1px;
+  /* ブラウザの最小文字サイズに引っかからないよう、文字を --min-font-size 倍で作って 1/--min-font-size 倍に縮める（pdf.js 本家 text_layer_builder.css と同じ。--min-font-size は TextLayer が測って入れる） */
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.textLayer > span, .textLayer > br { z-index: 1; color: transparent; position: absolute; white-space: pre; transform-origin: 0% 0%; -webkit-user-select: text; user-select: text; pointer-events: auto; cursor: text; }
+.textLayer > span { --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.textLayer > br::selection { background: transparent; }
+.textLayer ::selection { background: rgba(40, 110, 255, .32); color: transparent; }
+.textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; -webkit-user-select: none; user-select: none; }
+.textLayer.selecting .endOfContent { top: 0; pointer-events: auto; }
+/* 片側だけ表示している時は、見えていない側の文字を選択・コピーに混ぜない（data-h … 0＝左・原文、1＝右・日本語） */
+.reader[data-view="orig"] .textLayer [data-h="1"], .reader[data-view="ja"] .textLayer [data-h="0"] { display: none; }
+/* 書き込みの道具（マーカー・ペン・消しゴム・メモ）では文字を拾わない＝従来どおり書ける */
+.reader:not([data-tool="move"]) .textLayer > span, .reader:not([data-tool="move"]) .textLayer > br { pointer-events: none; -webkit-user-select: none; user-select: none; cursor: inherit; }
 .page-label { position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; color: #d4cfc2; pointer-events: none; }
 .page.has-pdf .page-label { display: none; }
 .page.render-failed::after { content: "このページを描画できませんでした"; position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: var(--danger); font-size: 13px; }
-.pins { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.pins { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
 .pin { position: absolute; width: 44px; height: 44px; margin: -44px 0 0 -22px; padding: 0; border: 0; background: none; pointer-events: auto; cursor: pointer; display: grid; place-items: end center; touch-action: none; }
 .pin .ic { width: 38px; height: 38px; fill: var(--pin, #ffd400); stroke: #3b3a36; stroke-width: 1.6; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .4)); }
 .pin.empty .ic { fill-opacity: .45; }

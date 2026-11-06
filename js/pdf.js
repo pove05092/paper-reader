@@ -16,4 +16,14 @@ export async function openPdf(blob) {
   const data = new Uint8Array(await blob.arrayBuffer());
   return pdfjs.getDocument({ data, ...docOptions() }).promise;
 }
+/** 文字層の倍率（PDF の 1pt を何 px で作るか）。大きめに作って CSS の変形で縮めると、小さい文字でも幅の合わせが崩れにくい */
+export const TEXT_SCALE = 2;
+/** 文字層（透明な文字）を作る準備。ページの全面（見開きなら両側）を倍率 TEXT_SCALE で作り、表示の倍率・半分表示は呼び出し側が CSS の変形で合わせる。
+ *  返す layer の render() を呼ぶと container に span が並ぶ（途中で捨てる時は layer.cancel()）。width・height は倍率 1（PDF の pt） */
+export async function makeTextLayer(page, container) {
+  const pdfjs = await loadPdfjs();
+  const viewport = page.getViewport({ scale: TEXT_SCALE });
+  const layer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container, viewport });
+  return { layer, width: viewport.width / TEXT_SCALE, height: viewport.height / TEXT_SCALE };
+}
 export const isCancelled = e => !!e && (e.name === 'RenderingCancelledException' || /cancel/i.test(String(e.message || '')));
